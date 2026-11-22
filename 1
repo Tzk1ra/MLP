@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLP 学习参数可视化</title>
+<style>
+  :root {
+    --bg: #f4f5f8; --card: #ffffff; --border: #e5e7ee; --text: #1f2430; --muted: #6b7280;
+    --accent: #2f5bff; --accent-2: #4f46e5; --pos: #ff7a45; --neg: #2f7bff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); padding: 20px 24px 40px; line-height: 1.6;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  header { max-width: 1180px; margin: 0 auto 14px; }
+  header h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+
+  .controls { max-width: 1180px; margin: 0 auto 16px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .controls .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+  .controls .row + .row { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field select, .field input[type="number"] { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 13px; background: #fafbfc; color: var(--text); min-width: 100px; }
+  .field input[type="range"] { width: 128px; }
+  .field .val { font-size: 12px; color: var(--accent); font-weight: 600; }
+  .buttons { display: flex; gap: 8px; align-items: flex-end; }
+  button { border: 1px solid var(--border); background: #fff; color: var(--text); border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; transition: all .15s; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: var(--accent-2); }
+  .stats { margin-left: auto; display: flex; gap: 18px; align-items: center; font-size: 12px; color: var(--muted); }
+  .stats b { font-size: 14px; color: var(--text); font-weight: 600; }
+  .stats .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+  main { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  .card h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+  .card h2 span { color: var(--muted); font-weight: 400; font-size: 12px; }
+  canvas { display: block; width: 100%; height: auto; }
+  .boundary-wrap { grid-row: span 2; }
+  #network { width: 100%; height: auto; }
+
+  .threshold { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .threshold input { flex: 1; }
+
+  .weights-card { grid-column: 1 / -1; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 6px; flex-wrap: wrap; }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+  .table-card { grid-column: 1 / -1; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 6px 12px; text-align: center; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  .ok { color: #0f9d6c; font-weight: 600; }
+  .bad { color: #e24b4a; font-weight: 600; }
+  .table-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  details.code { max-width: 1180px; margin: 14px auto 0; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px 16px; }
+  details.code summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+  details.code pre { background: #f8f9fb; border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+  code { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; }
+  .footer-note { max-width: 1180px; margin: 14px auto 0; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>看见 MLP 怎样学会参数</h1>
+  <p>一个小型多层感知机在浏览器里训练。拖动轮次滑块「时间旅行」，回看任意时刻的决策边界、权重与偏置（学习参数）、损失和预测如何一起变化。</p>
+</header>
+
+<section class="controls">
+  <div class="row">
+    <div class="field">
+      <label>数据集</label>
+      <select id="dataset">
+        <option value="xor">XOR 异或</option>
+        <option value="circle" selected>同心圆</option>
+        <option value="spiral">双螺旋</option>
+        <option value="gaussian">双高斯簇</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>隐藏层1</label>
+      <input type="range" id="h1" min="2" max="16" step="1" value="8">
+      <span class="val" id="h1v">8</span>
+    </div>
+    <div class="field">
+      <label>隐藏层2</label>
+      <input type="range" id="h2" min="0" max="16" step="1" value="4">
+      <span class="val" id="h2v">4</span>
+    </div>
+    <div class="field">
+      <label>学习率</label>
+      <input type="range" id="lr" min="-20" max="5" step="1" value="-4">
+      <span class="val" id="lrv">0.398</span>
+    </div>
+    <div class="field">
+      <label>激活函数</label>
+      <select id="activation">
+        <option value="relu" selected>ReLU</option>
+        <option value="tanh">Tanh</option>
+        <option value="sigmoid">Sigmoid</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>训练轮数</label>
+      <input type="number" id="epochs" min="10" max="10000" step="10" value="500">
+    </div>
+    <div class="field">
+      <label>播放速度</label>
+      <select id="speed">
+        <option value="1">慢</option>
+        <option value="3" selected>中</option>
+        <option value="10">快</option>
+      </select>
+    </div>
+  </div>
+  <div class="row">
+    <div class="buttons">
+      <button id="btn-train" class="primary">训练</button>
+      <button id="btn-play">播放</button>
+      <button id="btn-zero">回 0 轮</button>
+      <button id="btn-reset">重置</button>
+    </div>
+    <div class="field" style="flex:1; min-width:220px;">
+      <label>训练轮次（拖动回看历史）</label>
+      <input type="range" id="epoch-slider" min="0" max="0" step="1" value="0">
+    </div>
+    <div class="stats">
+      <div>轮次<br><b class="mono" id="st-epoch">0 / 0</b></div>
+      <div>损失<br><b class="mono" id="st-loss">—</b></div>
+      <div>准确率<br><b class="mono" id="st-acc">—</b></div>
+      <div>最大|W|<br><b class="mono" id="st-maxw">—</b></div>
+      <div>参数<br><b class="mono" id="st-params">—</b></div>
+    </div>
+  </div>
+</section>
+
+<main>
+  <div class="card boundary-wrap">
+    <h2>决策边界 <span>蓝 = 类别0 · 橙 = 类别1</span></h2>
+    <canvas id="boundary" width="560" height="560"></canvas>
+    <div class="threshold">
+      <span>分类阈值</span>
+      <input type="range" id="threshold" min="0.1" max="0.9" step="0.01" value="0.5">
+      <span id="threshold-v" class="mono" style="min-width:36px;">0.50</span>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:#2f7bff"></span>类别 0</span>
+      <span><span class="dot" style="background:#ff7a45"></span>类别 1</span>
+      <span>拖动阈值看边界如何随判定标准移动</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>损失曲线 <span>BCE 二分类交叉熵 · 圆点 = 当前轮次</span></h2>
+    <canvas id="loss" width="460" height="180"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>网络结构与权重 <span>线宽=权重绝对值，红=正 蓝=负</span></h2>
+    <svg id="network" viewBox="0 0 460 240" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+
+  <div class="card weights-card">
+    <h2>权重矩阵（学习参数）<span>每格 = 一个权重/偏置，颜色越深数值越大，红=正 蓝=负</span></h2>
+    <canvas id="weights" width="1000" height="240"></canvas>
+  </div>
+
+  <div class="card table-card" id="table-card">
+    <h2>预测结果 <span id="table-title"></span></h2>
+    <table id="pred-table" style="display:none;">
+      <thead><tr><th>输入 x₁</th><th>输入 x₂</th><th>目标</th><th>预测概率</th><th>分类</th><th>结果</th></tr></thead>
+      <tbody id="pred-body"></tbody>
+    </table>
+    <div class="table-hint" id="table-hint"></div>
+  </div>
+</main>
+
+<details class="code">
+  <summary>查看等价的 Python 实现（NumPy）</summary>
+  <pre><code>import numpy as np
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-z))
+
+# 2 -> h1 -> h2 -> 1 的 MLP，二分类
+def forward(x, params):
+    a = x
+    for W, b in params[:-1]:
+        a = np.tanh(W @ a + b)              # 隐藏层（此处以 tanh 为例）
+    W, b = params[-1]
+    return sigmoid(W @ a + b)               # 输出层 sigmoid
+
+def train(X, y, params, lr):
+    # 前向
+    a = X
+    cache = [a]
+    for W, b in params[:-1]:
+        a = np.tanh(a @ W.T + b); cache.append(a)
+    W, b = params[-1]
+    logit = a @ W.T + b; prob = sigmoid(logit)
+    # 损失：二元交叉熵
+    loss = -(y * np.log(prob) + (1 - y) * np.log(1 - prob)).mean()
+    # 反向传播（链式法则）→ 更新每个 W、b
+    # ...（与本页面 JS 逻辑一致）
+    return loss</code></pre>
+</details>
+
+<p class="footer-note">提示：切换数据集会按经验自动设置激活函数（XOR 用 Tanh、其余用 ReLU）。同心圆 / 双螺旋需要更多轮训练才能收敛，可加大「训练轮数」。</p>
+
+<script>
+"use strict";
+
+/* ============ 数学工具 ============ */
+function sigmoid(z) { return 1 / (1 + Math.exp(-z)); }
+function randn() {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+const ACTIVATIONS = {
+  relu:    { f: z => z > 0 ? z : 0,     df: z => z > 0 ? 1 : 0 },
+  tanh:    { f: z => Math.tanh(z),      df: z => { const t = Math.tanh(z); return 1 - t * t; } },
+  sigmoid: { f: z => sigmoid(z),        df: z => { const s = sigmoid(z); return s * (1 - s); } },
+};
+
+/* ============ 数据集 ============ */
+function genXOR() {
+  const pts = [];
+  const corners = [[0,0,0],[0,1,1],[1,0,1],[1,1,0]];
+  for (const [x, y, t] of corners) for (let i = 0; i < 30; i++) pts.push([x + (Math.random()-0.5)*0.18, y + (Math.random()-0.5)*0.18, t]);
+  return { pts, domain: [-0.35, 1.35], corners };
+}
+function genCircle() {
+  const pts = [];
+  for (let i = 0; i < 320; i++) { const a = Math.random()*2*Math.PI, r = Math.sqrt(Math.random()); pts.push([r*Math.cos(a), r*Math.sin(a), r < 0.5 ? 0 : 1]); }
+  return { pts, domain: [-1.15, 1.15] };
+}
+function genSpiral() {
+  const pts = [], n = 240, h = n/2;
+  for (let i = 0; i < n; i++) { const c = i < h ? 0 : 1, t = (i%h)/(h-1), r = 0.15+0.85*t, a = t*3.1*Math.PI + c*Math.PI; pts.push([r*Math.cos(a), r*Math.sin(a), c]); }
+  return { pts, domain: [-1.15, 1.15] };
+}
+function genGaussian() {
+  const pts = [], centers = [[-0.6,-0.6],[0.6,0.6]];
+  for (let i = 0; i < 320; i++) { const c = i%2, [cx,cy] = centers[c]; pts.push([cx+randn()*0.38, cy+randn()*0.38, c]); }
+  return { pts, domain: [-1.9, 1.9] };
+}
+const DATASETS = { xor: genXOR, circle: genCircle, spiral: genSpiral, gaussian: genGaussian };
+const RECOMMENDED_ACT = { xor: 'tanh', circle: 'relu', spiral: 'relu', gaussian: 'relu' };
+
+/* ============ MLP ============ */
+class MLP {
+  constructor(sizes, actName) {
+    this.sizes = sizes; this.act = ACTIVATIONS[actName]; this.W = []; this.b = [];
+    for (let i = 0; i < sizes.length - 1; i++) {
+      const fi = sizes[i], fo = sizes[i+1], sc = Math.sqrt(2/(fi+fo)); const W = [];
+      for (let j = 0; j < fo; j++) { const r = []; for (let k = 0; k < fi; k++) r.push(randn()*sc); W.push(r); }
+      this.W.push(W); this.b.push(new Array(fo).fill(0));
+    }
+  }
+  paramCount() { let n = 0; for (const W of this.W) for (const r of W) n += r.length; for (const b of this.b) n += b.length; return n; }
+  forward(x) {
+    const zs = [], acts = [x]; let a = x;
+    for (let i = 0; i < this.W.length; i++) {
+      const W = this.W[i], b = this.b[i], z = new Array(W.length);
+      for (let j = 0; j < W.length; j++) { let s = b[j]; for (let k = 0; k < W[j].length; k++) s += W[j][k]*a[k]; z[j] = s; }
+      zs.push(z); a = z.map(v => i === this.W.length-1 ? sigmoid(v) : this.act.f(v)); acts.push(a);
+    }
+    return { zs, acts, y: a[0] };
+  }
+  predict(x) { return this.forward(x).y; }
+  backward(zs, acts, t, g) {
+    const L = this.W.length; let d = [acts[L][0] - t];
+    for (let i = L-1; i >= 0; i--) {
+      const W = this.W[i], gW = g.W[i], gb = g.b[i], ap = acts[i];
+      for (let j = 0; j < W.length; j++) { const dd = d[j]; gb[j] += dd; for (let k = 0; k < W[j].length; k++) gW[j][k] += dd*ap[k]; }
+      if (i > 0) { const zp = zs[i-1], wd = new Array(W[0].length).fill(0); for (let j = 0; j < W.length; j++) for (let k = 0; k < W[j].length; k++) wd[k] += W[j][k]*d[j]; d = wd.map((v,k) => v*this.act.df(zp[k])); }
+    }
+  }
+  trainStep(data, lr) {
+    const L = this.W.length, n = data.length;
+    const g = { W: this.W.map(W => W.map(r => r.map(() => 0))), b: this.b.map(b => b.map(() => 0)) };
+    let loss = 0;
+    for (const [x0,x1,t] of data) {
+      const { zs, acts, y } = this.forward([x0,x1]); const yc = Math.max(1e-7, Math.min(1-1e-7, y));
+      loss += -(t*Math.log(yc) + (1-t)*Math.log(1-yc)); this.backward(zs, acts, t, g);
+    }
+    for (let i = 0; i < L; i++) { const W = this.W[i], gW = g.W[i], b = this.b[i], gb = g.b[i]; for (let j = 0; j < W.length; j++) { for (let k = 0; k < W[j].length; k++) W[j][k] -= lr*gW[j][k]/n; b[j] -= lr*gb[j]/n; } }
+    return loss / n;
+  }
+}
+
+/* ============ 状态 ============ */
+let data, domain, corners = null, mlp;
+let history = [], currentEpoch = 0, playing = false, rafId = null;
+
+const $ = id => document.getElementById(id);
+const bCanvas = $('boundary'), lCanvas = $('loss'), wCanvas = $('weights');
+const bCtx = bCanvas.getContext('2d'), lCtx = lCanvas.getContext('2d'), wCtx = wCanvas.getContext('2d');
+const GRID = 120;
+const off = document.createElement('canvas'); off.width = GRID; off.height = GRID;
+const offCtx = off.getContext('2d');
+
+function currentSizes() { const h1 = +$('h1').value, h2 = +$('h2').value, s = [2, h1]; if (h2 > 0) s.push(h2); s.push(1); return s; }
+function currentLR() { return Math.pow(10, $('lr').value / 10); }
+function threshold() { return +$('threshold').value; }
+
+function initNetwork() {
+  mlp = new MLP(currentSizes(), $('activation').value);
+  history = []; currentEpoch = 0; stopPlaying();
+  $('st-params').textContent = mlp.paramCount();
+}
+function loadDataset() {
+  const key = $('dataset').value, d = DATASETS[key]();
+  data = d.pts; domain = d.domain; corners = d.corners || null;
+  $('activation').value = RECOMMENDED_ACT[key];
+  initNetwork();
+}
+function cloneParams() { return { W: mlp.W.map(r => r.slice()), b: mlp.b.map(r => r.slice()) }; }
+
+/* ============ 训练 / 回放 ============ */
+function train(n) {
+  stopPlaying();
+  if (history.length > 0) { const last = history[history.length-1]; mlp.W = last.W.map(r => r.slice()); mlp.b = last.b.map(r => r.slice()); }
+  const lr = currentLR();
+  for (let i = 0; i < n; i++) { const loss = mlp.trainStep(data, lr); history.push({ ...cloneParams(), loss }); }
+  currentEpoch = history.length - 1;
+  render();
+}
+function applyEpoch(t) {
+  if (history.length === 0) { currentEpoch = 0; return; }
+  t = Math.max(0, Math.min(t, history.length - 1));
+  currentEpoch = t;
+  const s = history[t]; mlp.W = s.W; mlp.b = s.b;
+}
+function render() {
+  renderBoundary(); renderLoss(); renderNetwork(); renderWeights(); renderTable(); updateStats();
+  const max = Math.max(0, history.length - 1);
+  $('epoch-slider').max = max; $('epoch-slider').value = currentEpoch;
+  $('st-epoch').textContent = history.length > 0 ? `${currentEpoch} / ${max}` : '0 / 0';
+}
+function play() {
+  if (history.length <= 1) return;
+  playing = !playing;
+  $('btn-play').textContent = playing ? '暂停' : '播放';
+  if (playing) {
+    const step = +$('speed').value;
+    const tick = () => {
+      if (!playing) return;
+      if (currentEpoch >= history.length - 1) { stopPlaying(); render(); return; }
+      applyEpoch(currentEpoch + step); render();
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+  } else cancelAnimationFrame(rafId);
+}
+function stopPlaying() { playing = false; $('btn-play').textContent = '播放'; cancelAnimationFrame(rafId); }
+
+/* ============ 渲染：决策边界 ============ */
+function renderBoundary() {
+  const [dmin, dmax] = domain, thr = threshold();
+  const img = offCtx.createImageData(GRID, GRID);
+  for (let py = 0; py < GRID; py++) {
+    for (let px = 0; px < GRID; px++) {
+      const x = dmin + (dmax-dmin)*px/(GRID-1), y = dmax - (dmax-dmin)*py/(GRID-1);
+      const p = mlp.predict([x, y]);
+      const is1 = p >= thr;
+      const [r, g, bl] = is1 ? [255, 122, 69] : [47, 123, 255];
+      const idx = (py*GRID + px)*4; img.data[idx] = r; img.data[idx+1] = g; img.data[idx+2] = bl; img.data[idx+3] = 255;
+    }
+  }
+  offCtx.putImageData(img, 0, 0);
+  bCtx.imageSmoothingEnabled = true;
+  bCtx.clearRect(0, 0, bCanvas.width, bCanvas.height);
+  bCtx.drawImage(off, 0, 0, bCanvas.width, bCanvas.height);
+  const W = bCanvas.width, H = bCanvas.height;
+  const sx = v => (v-dmin)/(dmax-dmin)*W, sy = v => (1-(v-dmin)/(dmax-dmin))*H;
+  for (const [x, y, t] of data) {
+    bCtx.beginPath(); bCtx.arc(sx(x), sy(y), 3.2, 0, 2*Math.PI);
+    bCtx.fillStyle = t === 0 ? '#1a5cc8' : '#e05e20'; bCtx.fill();
+    bCtx.strokeStyle = 'rgba(255,255,255,0.9)'; bCtx.lineWidth = 1; bCtx.stroke();
+  }
+}
+
+/* ============ 渲染：损失曲线 ============ */
+function renderLoss() {
+  const W = lCanvas.width, H = lCanvas.height;
+  lCtx.clearRect(0, 0, W, H); lCtx.fillStyle = '#fff'; lCtx.fillRect(0, 0, W, H);
+  if (history.length < 2) { lCtx.fillStyle = '#bbb'; lCtx.font = '12px sans-serif'; lCtx.fillText('先点击「训练」', W/2 - 45, H/2); return; }
+  const pad = 26; let hi = 0.8;
+  for (const h of history) if (h.loss > hi) hi = h.loss;
+  hi *= 1.06;
+  const pw = W - pad - 8, ph = H - pad - 8;
+  const X = i => pad + pw*(i/(history.length-1)), Y = v => pad + ph*(1-v/hi);
+  lCtx.strokeStyle = '#e5e7ee'; lCtx.lineWidth = 1;
+  lCtx.beginPath(); lCtx.moveTo(pad, pad); lCtx.lineTo(pad, H-pad); lCtx.lineTo(W-8, H-pad); lCtx.stroke();
+  lCtx.strokeStyle = '#2f5bff'; lCtx.lineWidth = 1.6; lCtx.beginPath();
+  for (let i = 0; i < history.length; i++) { const x = X(i), y = Y(history[i].loss); i === 0 ? lCtx.moveTo(x, y) : lCtx.lineTo(x, y); }
+  lCtx.stroke();
+  const cx = X(currentEpoch), cy = Y(history[currentEpoch].loss);
+  lCtx.beginPath(); lCtx.arc(cx, cy, 4, 0, 2*Math.PI); lCtx.fillStyle = '#ff5a5a'; lCtx.fill();
+  lCtx.fillStyle = '#6b7280'; lCtx.font = '11px sans-serif';
+  lCtx.fillText(hi.toFixed(2), 2, pad-6); lCtx.fillText('0', 2, H-pad+12);
+  lCtx.fillText(String(history.length-1), W-34, H-4);
+}
+
+/* ============ 渲染：网络结构 ============ */
+function renderNetwork() {
+  const svg = $('network'), sizes = mlp.sizes, Wview = 460, Hview = 240;
+  const layerXs = sizes.map((_, i) => 55 + (Wview-110)*(i/(sizes.length-1)));
+  const layerYs = sizes.map(n => n === 1 ? [Hview/2] : Array.from({ length: n }, (_, k) => 40 + (Hview-80)*(k/(n-1))));
+  let html = '';
+  for (let i = 0; i < mlp.W.length; i++) {
+    const W = mlp.W[i];
+    for (let j = 0; j < W.length; j++) for (let k = 0; k < W[j].length; k++) {
+      const w = W[j][k], lw = Math.min(4, 0.4 + Math.abs(w)*2.2);
+      const c = w >= 0 ? `rgba(255,122,69,${Math.min(0.9, 0.15+Math.abs(w))})` : `rgba(47,123,255,${Math.min(0.9, 0.15+Math.abs(w))})`;
+      html += `<line x1="${layerXs[i]}" y1="${layerYs[i][k]}" x2="${layerXs[i+1]}" y2="${layerYs[i+1][j]}" stroke="${c}" stroke-width="${lw.toFixed(2)}"/>`;
+    }
+  }
+  const labels = ['输入', ...sizes.slice(1, -1).map((_, i) => `隐藏${i+1}`), '输出'];
+  sizes.forEach((n, i) => {
+    for (let k = 0; k < n; k++) html += `<circle cx="${layerXs[i]}" cy="${layerYs[i][k]}" r="${i===0||i===sizes.length-1?9:7}" fill="#fff" stroke="#1f2430" stroke-width="1.5"/>`;
+    html += `<text x="${layerXs[i]}" y="${Hview-8}" text-anchor="middle" font-size="11" fill="#6b7280">${labels[i]}</text>`;
+  });
+  html += `<text x="${layerXs[0]-22}" y="${layerYs[0][0]}" text-anchor="middle" font-size="10" fill="#6b7280">x₁</text>`;
+  html += `<text x="${layerXs[0]-22}" y="${layerYs[0][1]}" text-anchor="middle" font-size="10" fill="#6b7280">x₂</text>`;
+  html += `<text x="${layerXs[sizes.length-1]+20}" y="${layerYs[sizes.length-1][0]}" text-anchor="middle" font-size="10" fill="#6b7280">ŷ</text>`;
+  svg.innerHTML = html;
+}
+
+/* ============ 渲染：权重矩阵 ============ */
+function renderWeights() {
+  const cell = 13, gap = 2, layerGap = 30, topPad = 22, sizes = mlp.sizes;
+  let totalW = 16;
+  for (let i = 0; i < mlp.W.length; i++) { totalW += sizes[i]*(cell+gap) + (cell+gap); if (i < mlp.W.length-1) totalW += layerGap; }
+  const maxRows = Math.max(...sizes.slice(1)), totalH = topPad + maxRows*(cell+gap) + 14;
+  wCanvas.width = totalW; wCanvas.height = totalH;
+  wCtx.clearRect(0, 0, totalW, totalH); wCtx.fillStyle = '#fff'; wCtx.fillRect(0, 0, totalW, totalH);
+  let maxAbs = 1e-6;
+  for (const W of mlp.W) for (const r of W) for (const v of r) maxAbs = Math.max(maxAbs, Math.abs(v));
+  for (const b of mlp.b) for (const v of b) maxAbs = Math.max(maxAbs, Math.abs(v));
+  let xCur = 8;
+  for (let i = 0; i < mlp.W.length; i++) {
+    const W = mlp.W[i], b = mlp.b[i], rows = sizes[i+1], cols = sizes[i];
+    for (let j = 0; j < rows; j++) {
+      for (let k = 0; k < cols; k++) { wCtx.fillStyle = cellColor(W[j][k]/maxAbs); wCtx.fillRect(xCur + k*(cell+gap), topPad + j*(cell+gap), cell, cell); }
+      wCtx.fillStyle = cellColor(b[j]/maxAbs); wCtx.fillRect(xCur + cols*(cell+gap), topPad + j*(cell+gap), cell, cell);
+    }
+    wCtx.fillStyle = '#6b7280'; wCtx.font = '11px sans-serif';
+    const label = i === mlp.W.length-1 ? '输出层' : (i === 0 ? '输入→隐藏1' : `隐藏${i}→隐藏${i+1}`);
+    wCtx.fillText(label, xCur, topPad-8);
+    xCur += cols*(cell+gap) + (cell+gap) + (i < mlp.W.length-1 ? layerGap : 0);
+  }
+  wCtx.fillStyle = '#6b7280'; wCtx.font = '11px sans-serif';
+  wCtx.fillText('每格 = 一个权重参数 · 右侧细列 = 偏置 b · 颜色深 = 数值大', 8, totalH-4);
+}
+function cellColor(t) { const a = Math.min(1, Math.abs(t)); return t >= 0 ? `rgba(255,122,69,${0.08+0.88*a})` : `rgba(47,123,255,${0.08+0.88*a})`; }
+
+/* ============ 渲染：预测表格 ============ */
+function renderTable() {
+  const isXor = $('dataset').value === 'xor';
+  $('pred-table').style.display = isXor ? '' : 'none';
+  $('table-title').textContent = isXor ? 'XOR 四个角点的预测' : '（仅 XOR 数据集展示逐点预测）';
+  const thr = threshold(), body = $('pred-body');
+  body.innerHTML = '';
+  let acc = 0, n = 0;
+  if (isXor && corners) {
+    for (const [x1, x2, t] of corners) {
+      const p = mlp.predict([x1, x2]), c = p >= thr ? 1 : 0, ok = c === t;
+      if (ok) acc++; n++;
+      body.innerHTML += `<tr><td>${x1}</td><td>${x2}</td><td>${t}</td><td class="mono">${p.toFixed(3)}</td><td>${c}</td><td class="${ok?'ok':'bad'}">${ok?'✓ 正确':'✗ 错误'}</td></tr>`;
+    }
+  } else {
+    for (const [x1, x2, t] of data) { const p = mlp.predict([x1, x2]); if ((p >= thr ? 1 : 0) === t) acc++; n++; }
+  }
+  $('table-hint').textContent = isXor ? `角点准确率 ${acc}/${n}` : `训练集准确率 ${acc}/${n}（逐点预测见决策边界）`;
+  $('st-acc').textContent = n > 0 ? (acc/n*100).toFixed(1) + '%' : '—';
+}
+
+/* ============ 指标 ============ */
+function updateStats() {
+  let maxAbs = 0;
+  for (const W of mlp.W) for (const r of W) for (const v of r) maxAbs = Math.max(maxAbs, Math.abs(v));
+  $('st-maxw').textContent = maxAbs.toFixed(3);
+  $('st-loss').textContent = history.length > 0 ? history[currentEpoch].loss.toFixed(4) : '—';
+}
+
+/* ============ 事件 ============ */
+$('btn-train').addEventListener('click', () => train(+$('epochs').value));
+$('btn-play').addEventListener('click', play);
+$('btn-zero').addEventListener('click', () => { stopPlaying(); applyEpoch(0); render(); });
+$('btn-reset').addEventListener('click', () => { initNetwork(); render(); });
+$('epoch-slider').addEventListener('input', () => { stopPlaying(); applyEpoch(+$('epoch-slider').value); render(); });
+$('threshold').addEventListener('input', () => { $('threshold-v').textContent = threshold().toFixed(2); renderBoundary(); renderTable(); });
+
+$('dataset').addEventListener('change', () => { loadDataset(); render(); });
+$('activation').addEventListener('change', () => { initNetwork(); render(); });
+$('h1').addEventListener('input', () => { $('h1v').textContent = $('h1').value; initNetwork(); render(); });
+$('h2').addEventListener('input', () => { $('h2v').textContent = $('h2').value; initNetwork(); render(); });
+$('lr').addEventListener('input', () => { $('lrv').textContent = currentLR().toFixed(3); });
+
+/* ============ 初始化 ============ */
+loadDataset();
+$('lrv').textContent = currentLR().toFixed(3);
+render();
+</script>
+</body>
+</html>
